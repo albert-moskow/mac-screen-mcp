@@ -54,7 +54,7 @@ SESSION_STATE: dict[str, Any] = {
     "expires_at": 0.0,
     "reason": "",
 }
-HTTP_OUTPUTS: list[dict[str, Any]] | None = None
+HTTP_OUTPUTS = None
 
 
 def is_macos() -> bool:
@@ -454,17 +454,21 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 launchctl kickstart -k "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
 
 "$PY_BIN" - <<'PY'
-import socket, sys, time
+import os, sys, time, urllib.request
+token = open(os.path.expanduser("~/.local/share/opencode/mac-screen-mcp/token")).read().strip()
 for _ in range(20):
-    s = socket.socket()
-    s.settimeout(0.5)
     try:
-        s.connect(("127.0.0.1", 18766))
-        s.close()
-        print("Local MCP server is listening on 0.0.0.0:18766")
-        sys.exit(0)
-    except OSError:
-        s.close()
+        req = urllib.request.Request(
+            "http://127.0.0.1:18766/mcp",
+            data=b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}',
+            headers={"Content-Type":"application/json","Authorization":"Bearer "+token},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=1) as resp:
+            if resp.status == 200:
+                print("Local MCP server is listening and verified on 0.0.0.0:18766")
+                sys.exit(0)
+    except Exception:
         time.sleep(0.25)
 print("Warning: port 18766 did not open yet; check ~/.local/share/opencode/mac-screen-mcp/server.log", file=sys.stderr)
 sys.exit(1)

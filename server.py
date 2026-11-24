@@ -26,7 +26,7 @@ SESSION_STATE: dict[str, Any] = {
     "expires_at": 0.0,
     "reason": "",
 }
-HTTP_OUTPUTS: list[dict[str, Any]] | None = None
+HTTP_OUTPUTS = None
 
 
 def is_macos() -> bool:
