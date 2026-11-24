@@ -3,10 +3,12 @@ import base64
 import json
 import os
 import platform
+import secrets
 import subprocess
 import sys
 import tempfile
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -23,6 +25,7 @@ SESSION_STATE: dict[str, Any] = {
     "expires_at": 0.0,
     "reason": "",
 }
+HTTP_OUTPUTS: list[dict[str, Any]] | None = None
 
 
 def is_macos() -> bool:
@@ -183,6 +186,9 @@ TOOLS = [
 
 
 def send_message(msg: dict[str, Any]) -> None:
+    if HTTP_OUTPUTS is not None:
+        HTTP_OUTPUTS.append(msg)
+        return
     sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
@@ -311,7 +317,63 @@ def handle_request(msg: dict[str, Any]) -> None:
         )
 
 
+class MCPHttpHandler(BaseHTTPRequestHandler):
+    server_version = "MacScreenMCP/0.1"
+
+    def do_POST(self) -> None:
+        global HTTP_OUTPUTS
+        token = os.environ.get("MAC_SCREEN_TOKEN", "")
+        provided = self.headers.get("Authorization", "")
+        expected = f"Bearer {token}"
+        if not token or not secrets.compare_digest(provided, expected):
+            self.send_error(401, "Unauthorized")
+            return
+        if self.path != "/mcp":
+            self.send_error(404, "Not found")
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 1 or length > 1_000_000:
+                self.send_error(413, "Invalid request size")
+                return
+            request = json.loads(self.rfile.read(length))
+            if not isinstance(request, dict) or request.get("jsonrpc") != "2.0":
+                self.send_error(400, "Invalid JSON-RPC request")
+                return
+            HTTP_OUTPUTS = []
+            handle_request(request)
+            responses = HTTP_OUTPUTS
+            HTTP_OUTPUTS = None
+            if not responses:
+                self.send_response(202)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            payload = json.dumps(responses[-1], ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+        except (ValueError, json.JSONDecodeError):
+            HTTP_OUTPUTS = None
+            self.send_error(400, "Invalid JSON")
+        except Exception:
+            HTTP_OUTPUTS = None
+            self.send_error(500, "Internal server error")
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        sys.stderr.write("mac-screen: " + fmt % args + "\n")
+
+
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "--http":
+        if not os.environ.get("MAC_SCREEN_TOKEN"):
+            raise SystemExit("MAC_SCREEN_TOKEN is required")
+        print("mac-screen MCP listening on 127.0.0.1:8766/mcp", file=sys.stderr)
+        HTTPServer(("127.0.0.1", 8766), MCPHttpHandler).serve_forever()
+        return
     for line in sys.stdin:
         line = line.strip()
         if not line:
