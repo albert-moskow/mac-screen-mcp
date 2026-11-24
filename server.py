@@ -322,6 +322,10 @@ class MCPHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         global HTTP_OUTPUTS
+        client_ip = self.client_address[0]
+        if client_ip != "127.0.0.1" and not client_ip.startswith("10.147.20."):
+            self.send_error(403, "Forbidden")
+            return
         token = os.environ.get("MAC_SCREEN_TOKEN", "")
         provided = self.headers.get("Authorization", "")
         expected = f"Bearer {token}"
@@ -371,8 +375,10 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--http":
         if not os.environ.get("MAC_SCREEN_TOKEN"):
             raise SystemExit("MAC_SCREEN_TOKEN is required")
-        print("mac-screen MCP listening on 127.0.0.1:8766/mcp", file=sys.stderr)
-        HTTPServer(("127.0.0.1", 8766), MCPHttpHandler).serve_forever()
+        host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
+        port = int(sys.argv[3]) if len(sys.argv) > 3 else 8766
+        print(f"mac-screen MCP listening on {host}:{port}/mcp", file=sys.stderr)
+        HTTPServer((host, port), MCPHttpHandler).serve_forever()
         return
     for line in sys.stdin:
         line = line.strip()

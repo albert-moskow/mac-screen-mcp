@@ -2,60 +2,30 @@
 
 ## Русский
 
-Удалённый MCP-сервер снимков экрана для OpenCode. Сервер работает на Mac, OpenCode подключается через приватную сеть Tailscale. Снимок делается только после подтверждения в системном окне macOS. Управления мышью и клавиатурой нет.
+Удалённый MCP-сервер снимков экрана для OpenCode через **автономный ZeroTier** (локальный контроллер сети поднимается прямо на Proxmox — без аккаунтов и регистрации на сайте). Снимок делается только после подтверждения в системном окне macOS.
 
-### Установка
+### Установка (3 команды)
 
-1. Установи и войди в Tailscale на Mac и Proxmox. Оба устройства должны быть в одном tailnet. Не включай Tailscale Funnel и не открывай публичные порты.
-2. На Mac выполни:
-
+1. **На сервере (Proxmox)** создай приватную сеть ZeroTier:
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/albert-moskow/mac-screen-mcp/main/install-macos.sh | sh
+   curl -fsSL https://raw.githubusercontent.com/albert-moskow/mac-screen-mcp/main/install-proxmox.sh | sh
    ```
+2. **На Mac** выполни команду, которую напечатал шаг 1 (она поставит ZeroTier, подключит Mac к сети и запустит MCP-сервер).
+3. **На сервере (Proxmox)** выполни финальную команду `pair`, которую напечатал Mac (не публикуй её в чате — в ней секретный токен).
 
-   Установщик выведет вторую команду с приватным адресом Mac в Tailscale и случайным секретным токеном.
-3. Выполни напечатанную команду в том же окружении и от имени того же пользователя, где запущен OpenCode на Proxmox. Она добавит MCP-сервер в конфигурацию.
-4. Проверь `/mcps` в OpenCode. Для снимка вызови `mac-screen_request_screen_access`, подтверди запрос на Mac, затем вызови `mac-screen_capture_screen`. Для отключения доступа вызови `mac-screen_revoke_screen_access`.
-
-Каждая установка создаёт собственный случайный токен. Не публикуй токен и команду сопряжения: токен даёт доступ к MCP-серверу. Нужен вход в Tailscale на обоих устройствах. GitHub хранит только код и не передаёт снимки экрана.
-
-### Удаление с Mac
-
-```sh
-launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/ai.opencode.mac-screen.plist"; tailscale serve --https=443 off; rm -rf "$HOME/.local/share/opencode/mac-screen-mcp" "$HOME/Library/LaunchAgents/ai.opencode.mac-screen.plist"
-```
-
-На Proxmox удали `mac-screen` из `mcp.servers` в конфигурации OpenCode.
+После этого проверь `/mcps` в OpenCode.
 
 ## English
 
-Remote screenshot MCP server for OpenCode. The server runs on Mac; OpenCode connects over a private Tailscale network. Screen capture only runs after approval in a macOS system dialog. Mouse and keyboard control are not included.
+Remote screenshot MCP server for OpenCode over **self-hosted ZeroTier** (the network controller runs directly on your Proxmox host — no accounts or web sign-up required). Screen capture only runs after approval in a macOS system dialog.
 
-### Setup
+### Setup (3 commands)
 
-1. Install and sign in to Tailscale on Mac and Proxmox. Keep both devices in the same tailnet. Do not enable Tailscale Funnel or expose public ports.
-2. On Mac, run:
-
+1. **On Proxmox**, create your private ZeroTier network:
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/albert-moskow/mac-screen-mcp/main/install-macos.sh | sh
+   curl -fsSL https://raw.githubusercontent.com/albert-moskow/mac-screen-mcp/main/install-proxmox.sh | sh
    ```
+2. **On Mac**, run the command printed by step 1 (installs ZeroTier, joins the network, and starts the MCP server).
+3. **On Proxmox**, run the final `pair` command printed by your Mac (keep it private — it contains your bearer token).
 
-   The installer prints a second command containing Mac's private Tailscale address and a random secret token.
-3. Run that printed command in the same environment and as the same user that runs OpenCode on Proxmox. It adds the MCP server to OpenCode configuration.
-4. Check `/mcps` in OpenCode. To capture a screen, call `mac-screen_request_screen_access`, approve the prompt on Mac, then call `mac-screen_capture_screen`. Revoke access with `mac-screen_revoke_screen_access`.
-
-Each installation creates its own random token. Keep the token and pairing command private: the token grants access to the MCP server. Tailscale sign-in is required on both devices. GitHub hosts code only; screen captures are not sent to GitHub.
-
-### Uninstall from Mac
-
-```sh
-launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/ai.opencode.mac-screen.plist"; tailscale serve --https=443 off; rm -rf "$HOME/.local/share/opencode/mac-screen-mcp" "$HOME/Library/LaunchAgents/ai.opencode.mac-screen.plist"
-```
-
-On Proxmox, remove `mac-screen` from `mcp.servers` in OpenCode configuration.
-
-## Tests / Тесты
-
-```sh
-python3 -m unittest test_server.py
-```
+Then check `/mcps` in OpenCode.
