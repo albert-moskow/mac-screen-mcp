@@ -4,8 +4,16 @@ set -eu
 BASE="https://raw.githubusercontent.com/albert-moskow/mac-screen-mcp/main"
 DIR="$HOME/.local/share/opencode/mac-screen-mcp"
 [ "$(uname -s)" = Darwin ] || { echo "Run on macOS." >&2; exit 1; }
-for bin in curl python3 tailscale; do command -v "$bin" >/dev/null || { echo "Missing $bin." >&2; exit 1; }; done
-tailscale status >/dev/null 2>&1 || { echo "Sign in to Tailscale on this Mac first." >&2; exit 1; }
+for bin in curl python3; do command -v "$bin" >/dev/null || { echo "Missing $bin." >&2; exit 1; }; done
+if command -v tailscale >/dev/null 2>&1; then
+  TS=tailscale
+elif [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then
+  TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+else
+  echo "Tailscale is not installed. Install Tailscale on Mac (https://tailscale.com/download/mac or brew install --cask tailscale), sign in, and rerun." >&2
+  exit 1
+fi
+"$TS" status >/dev/null 2>&1 || { echo "Open Tailscale on this Mac and sign in first." >&2; exit 1; }
 
 mkdir -p "$DIR" "$HOME/Library/LaunchAgents"
 curl -fsSL "$BASE/server.py" -o "$DIR/server.py"
@@ -33,9 +41,9 @@ cat > "$PLIST" <<EOF
 EOF
 launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-tailscale serve --bg 8766
+"$TS" serve --bg 8766
 
-HOST=$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"].get("DNSName", "").rstrip("."))')
+HOST=$("$TS" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"].get("DNSName", "").rstrip("."))')
 [ -n "$HOST" ] || { echo "Could not read Tailscale DNS name." >&2; exit 1; }
 printf '\nMac server ready. Pair it on Proxmox using this command (keep token private):\n\n'
 printf 'curl -fsSL https://raw.githubusercontent.com/albert-moskow/mac-screen-mcp/main/install-proxmox.sh | sh -s -- %s %s\n\n' "https://$HOST" "$TOKEN"
