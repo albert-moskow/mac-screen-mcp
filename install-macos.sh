@@ -9,11 +9,20 @@ if command -v tailscale >/dev/null 2>&1; then
   TS=tailscale
 elif [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; then
   TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+elif command -v brew >/dev/null 2>&1; then
+  echo "Installing Tailscale via Homebrew..."
+  brew install --cask tailscale
+  open -a Tailscale || true
+  TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
 else
   echo "Tailscale is not installed. Install Tailscale on Mac (https://tailscale.com/download/mac or brew install --cask tailscale), sign in, and rerun." >&2
   exit 1
 fi
-"$TS" status >/dev/null 2>&1 || { echo "Open Tailscale on this Mac and sign in first." >&2; exit 1; }
+if ! "$TS" status >/dev/null 2>&1; then
+  open -a Tailscale >/dev/null 2>&1 || true
+  echo "Tailscale opened. Finish signing in to Tailscale on this Mac, then rerun this command." >&2
+  exit 1
+fi
 
 mkdir -p "$DIR" "$HOME/Library/LaunchAgents"
 curl -fsSL "$BASE/server.py" -o "$DIR/server.py"
