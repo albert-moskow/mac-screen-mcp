@@ -120,6 +120,19 @@ def capture_screen() -> dict[str, Any]:
                 check=False,
             )
             if proc.returncode != 0 or not os.path.exists(tmp_path):
+                # Fallback when LaunchAgent lacks direct TCC Screen Recording:
+                # run screencapture via Terminal.app which has Screen Recording permission.
+                osa = (
+                    f'tell application "Terminal" to do script '
+                    f'"screencapture -x {tmp_path} && exit"'
+                )
+                subprocess.run(["osascript", "-e", osa], capture_output=True, text=True, timeout=10, check=False)
+                for _ in range(30):
+                    if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
+                        proc = subprocess.CompletedProcess(args=["screencapture"], returncode=0, stdout="", stderr="")
+                        break
+                    time.sleep(0.2)
+            if proc.returncode != 0 or not os.path.exists(tmp_path):
                 raise RuntimeError(
                     f"Не удалось сделать снимок через screencapture: {proc.stderr.strip() or 'код ' + str(proc.returncode)}"
                 )

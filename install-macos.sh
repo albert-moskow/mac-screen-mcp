@@ -147,6 +147,17 @@ def capture_screen() -> dict[str, Any]:
                 check=False,
             )
             if proc.returncode != 0 or not os.path.exists(tmp_path):
+                osa = (
+                    f'tell application "Terminal" to do script '
+                    f'"screencapture -x {tmp_path} && exit"'
+                )
+                subprocess.run(["osascript", "-e", osa], capture_output=True, text=True, timeout=10, check=False)
+                for _ in range(30):
+                    if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
+                        proc = subprocess.CompletedProcess(args=["screencapture"], returncode=0, stdout="", stderr="")
+                        break
+                    time.sleep(0.2)
+            if proc.returncode != 0 or not os.path.exists(tmp_path):
                 raise RuntimeError(
                     f"Не удалось сделать снимок через screencapture: {proc.stderr.strip() or 'код ' + str(proc.returncode)}"
                 )
@@ -453,8 +464,9 @@ cat > "$PLIST" <<EOF
 <key>StandardErrorPath</key><string>$DIR/server.log</string></dict></plist>
 EOF
 launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-launchctl kickstart -k "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+pkill -f "$DIR/server.py" >/dev/null 2>&1 || true
+# Start directly from the current Terminal session so macOS TCC inherits Terminal.app's Screen Recording permission
+nohup "$DIR/server.sh" >>"$DIR/server.log" 2>&1 </dev/null &
 
 "$PY_BIN" - <<'PY'
 import os, sys, time, urllib.request
