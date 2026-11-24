@@ -17,13 +17,33 @@ if [ "${1:-}" = "pair" ]; then
   NWID=$(cat "$STATE_DIR/nwid")
   AUTH=$(sudo cat /var/lib/zerotier-one/authtoken.secret)
   MAC_IP="10.147.20.2"
+  TOKEN_FILE="$STATE_DIR/token"
+  umask 077
+  printf '%s' "$TOKEN" > "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
   curl -fsSL -X POST "http://127.0.0.1:9993/controller/network/$NWID/member/$MAC_NODE" \
     -H "X-ZT1-Auth: $AUTH" \
     -d "{\"authorized\":true,\"ipAssignments\":[\"$MAC_IP\"]}" >/dev/null
 
-  python3 - "http://$MAC_IP:8766" "$TOKEN" <<'PY'
+  echo "Waiting for Mac ($MAC_IP:8766) over ZeroTier..."
+  python3 - "$MAC_IP" <<'PY'
+import socket, sys, time
+host = sys.argv[1]
+for _ in range(15):
+    s = socket.socket()
+    s.settimeout(1.5)
+    try:
+        s.connect((host, 8766))
+        s.close()
+        break
+    except OSError:
+        s.close()
+        time.sleep(1)
+PY
+
+  python3 - "http://$MAC_IP:8766" <<'PY'
 import json, os, sys, tempfile
-url, token = sys.argv[1:]
+url = sys.argv[1]
 path = os.path.expanduser("~/.config/opencode/opencode.json")
 if not os.path.exists(path):
     path += "c"
@@ -38,7 +58,7 @@ servers["mac-screen"] = {
     "type": "remote",
     "url": url.rstrip("/") + "/mcp",
     "oauth": False,
-    "headers": {"Authorization": "Bearer " + token},
+    "headers": {"Authorization": "Bearer {file:~/.local/share/opencode/mac-screen-mcp/token}"},
     "codemode": False,
 }
 fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), prefix="opencode-")
