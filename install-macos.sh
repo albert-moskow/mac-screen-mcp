@@ -25,7 +25,7 @@ sudo "$ZT" join "$NWID" >/dev/null
 MAC_NODE=$(sudo "$ZT" info | awk '{print $3}')
 
 mkdir -p "$DIR" "$HOME/Library/LaunchAgents"
-curl -fsSL "$BASE/server.py" -o "$DIR/server.py"
+curl -fsSL "$BASE/server.py?v=$(date +%s)" -o "$DIR/server.py"
 TOKEN_FILE="$DIR/token"
 if [ ! -s "$TOKEN_FILE" ]; then umask 077; python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > "$TOKEN_FILE"; fi
 chmod 600 "$TOKEN_FILE"
