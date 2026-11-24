@@ -59,7 +59,7 @@ servers["mac-screen"] = {
     "url": url.rstrip("/") + "/mcp",
     "oauth": False,
     "headers": {"Authorization": "Bearer {file:~/.local/share/opencode/mac-screen-mcp/token}"},
-    "codemode": False,
+    "codemode": True,
 }
 fd, temp = tempfile.mkstemp(dir=os.path.dirname(path), prefix="opencode-")
 with os.fdopen(fd, "w", encoding="utf-8") as f:

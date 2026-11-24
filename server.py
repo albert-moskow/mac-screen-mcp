@@ -321,6 +321,9 @@ def handle_request(msg: dict[str, Any]) -> None:
 class MCPHttpHandler(BaseHTTPRequestHandler):
     server_version = "MacScreenMCP/0.1"
 
+    def do_GET(self) -> None:
+        self.send_error(405, "Method Not Allowed")
+
     def do_POST(self) -> None:
         global HTTP_OUTPUTS
         client_ip = self.client_address[0]
