@@ -25,7 +25,7 @@ if [ "${1:-}" = "pair" ]; then
     -H "X-ZT1-Auth: $AUTH" \
     -d "{\"authorized\":true,\"ipAssignments\":[\"$MAC_IP\"]}" >/dev/null
 
-  echo "Waiting for Mac ($MAC_IP:8766) over ZeroTier..."
+  echo "Waiting for Mac ($MAC_IP:18766) over ZeroTier..."
   python3 - "$MAC_IP" <<'PY'
 import socket, sys, time
 host = sys.argv[1]
@@ -33,7 +33,7 @@ for _ in range(15):
     s = socket.socket()
     s.settimeout(1.5)
     try:
-        s.connect((host, 8766))
+        s.connect((host, 18766))
         s.close()
         break
     except OSError:
@@ -41,7 +41,7 @@ for _ in range(15):
         time.sleep(1)
 PY
 
-  python3 - "http://$MAC_IP:8766" <<'PY'
+  python3 - "http://$MAC_IP:18766" <<'PY'
 import json, os, sys, tempfile
 url = sys.argv[1]
 path = os.path.expanduser("~/.config/opencode/opencode.json")

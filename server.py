@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 import base64
 import json
 import os
@@ -376,7 +377,7 @@ def main() -> None:
         if not os.environ.get("MAC_SCREEN_TOKEN"):
             raise SystemExit("MAC_SCREEN_TOKEN is required")
         host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
-        port = int(sys.argv[3]) if len(sys.argv) > 3 else 8766
+        port = int(sys.argv[3]) if len(sys.argv) > 3 else 18766
         print(f"mac-screen MCP listening on {host}:{port}/mcp", file=sys.stderr)
         HTTPServer((host, port), MCPHttpHandler).serve_forever()
         return

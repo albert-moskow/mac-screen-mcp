@@ -28,6 +28,7 @@ MAC_NODE=$(sudo "$ZT" info | awk '{print $3}')
 mkdir -p "$DIR" "$HOME/Library/LaunchAgents"
 cat > "$DIR/server.py" <<'SERVER_EOF'
 #!/usr/bin/env python3
+from __future__ import annotations
 import base64
 import json
 import os
@@ -403,7 +404,7 @@ def main() -> None:
         if not os.environ.get("MAC_SCREEN_TOKEN"):
             raise SystemExit("MAC_SCREEN_TOKEN is required")
         host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
-        port = int(sys.argv[3]) if len(sys.argv) > 3 else 8766
+        port = int(sys.argv[3]) if len(sys.argv) > 3 else 18766
         print(f"mac-screen MCP listening on {host}:{port}/mcp", file=sys.stderr)
         HTTPServer((host, port), MCPHttpHandler).serve_forever()
         return
@@ -432,12 +433,13 @@ TOKEN=$(cat "$TOKEN_FILE")
 cat > "$DIR/server.sh" <<EOF
 #!/bin/sh
 export MAC_SCREEN_TOKEN='$TOKEN'
-exec '$PY_BIN' '$DIR/server.py' --http 0.0.0.0 8766
+exec '$PY_BIN' '$DIR/server.py' --http 0.0.0.0 18766
 EOF
 chmod 700 "$DIR/server.sh"
 
 LABEL=ai.opencode.mac-screen
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+: > "$DIR/server.log"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -457,14 +459,14 @@ for _ in range(20):
     s = socket.socket()
     s.settimeout(0.5)
     try:
-        s.connect(("127.0.0.1", 8766))
+        s.connect(("127.0.0.1", 18766))
         s.close()
-        print("Local MCP server is listening on 0.0.0.0:8766")
+        print("Local MCP server is listening on 0.0.0.0:18766")
         sys.exit(0)
     except OSError:
         s.close()
         time.sleep(0.25)
-print("Warning: port 8766 did not open yet; check ~/.local/share/opencode/mac-screen-mcp/server.log", file=sys.stderr)
+print("Warning: port 18766 did not open yet; check ~/.local/share/opencode/mac-screen-mcp/server.log", file=sys.stderr)
 sys.exit(1)
 PY
 
