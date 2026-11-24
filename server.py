@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+import base64
+import json
+import os
+import platform
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Any
+
+PROTOCOL_VERSION = "2024-11-05"
+SERVER_NAME = "mac-screen"
+SERVER_VERSION = "0.1.0"
+
+# A minimal 1x1 transparent PNG used as a safe fallback on non-macOS test systems
+FALLBACK_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+)
+
+SESSION_STATE: dict[str, Any] = {
+    "approved": False,
+    "expires_at": 0.0,
+    "reason": "",
+}
+
+
+def is_macos() -> bool:
+    return platform.system() == "Darwin"
+
+
+def has_active_consent() -> bool:
+    if not SESSION_STATE["approved"]:
+        return False
+    if time.time() >= SESSION_STATE["expires_at"]:
+        SESSION_STATE["approved"] = False
+        SESSION_STATE["expires_at"] = 0.0
+        SESSION_STATE["reason"] = ""
+        return False
+    return True
+
+
+def prompt_macos_consent(reason: str, duration_seconds: int) -> bool:
+    safe_reason = reason.replace("\\", "\\\\").replace('"', '\\"')
+    script = (
+        f'display dialog "OpenCode запрашивает доступ к снимку экрана.\\n\\n'
+        f'Причина: {safe_reason}\\n'
+        f'Длительность: {duration_seconds} сек." '
+        f'with title "OpenCode Screen Access" '
+        f'buttons {{"Отклонить", "Разрешить"}} default button "Разрешить" cancel button "Отклонить"'
+    )
+    result = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def request_access(reason: str, duration_seconds: int = 120) -> dict[str, Any]:
+    duration_seconds = max(15, min(int(duration_seconds), 600))
+    if is_macos():
+        approved = prompt_macos_consent(reason, duration_seconds)
+    else:
+        # On Linux/dev environment, only approve when explicitly enabled via env var
+        approved = os.environ.get("MAC_SCREEN_DEV_AUTO_APPROVE") == "1"
+
+    if not approved:
+        SESSION_STATE["approved"] = False
+        SESSION_STATE["expires_at"] = 0.0
+        SESSION_STATE["reason"] = ""
+        return {
+            "approved": False,
+            "platform": platform.system(),
+            "message": (
+                "Доступ не подтверждён. На macOS нажмите «Разрешить» в системном окне; "
+                "в тестовой Linux-среде установите MAC_SCREEN_DEV_AUTO_APPROVE=1."
+            ),
+        }
+
+    SESSION_STATE["approved"] = True
+    SESSION_STATE["expires_at"] = time.time() + duration_seconds
+    SESSION_STATE["reason"] = reason
+    return {
+        "approved": True,
+        "platform": platform.system(),
+        "expires_in_seconds": duration_seconds,
+        "reason": reason,
+    }
+
+
+def revoke_access() -> dict[str, Any]:
+    SESSION_STATE["approved"] = False
+    SESSION_STATE["expires_at"] = 0.0
+    SESSION_STATE["reason"] = ""
+    return {"approved": False, "message": "Доступ к экрану отключён."}
+
+
+def capture_screen() -> dict[str, Any]:
+    if not has_active_consent():
+        raise PermissionError(
+            "Нет активного разрешения на снимок экрана. Сначала вызовите request_screen_access."
+        )
+
+    if is_macos():
+        with tempfile.NamedTemporaryFile(prefix="opencode_screen_", suffix=".png", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            proc = subprocess.run(
+                ["screencapture", "-x", tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            if proc.returncode != 0 or not os.path.exists(tmp_path):
+                raise RuntimeError(
+                    f"Не удалось сделать снимок через screencapture: {proc.stderr.strip() or 'код ' + str(proc.returncode)}"
+                )
+            with open(tmp_path, "rb") as f:
+                data_b64 = base64.b64encode(f.read()).decode("ascii")
+            return {
+                "mimeType": "image/png",
+                "data": data_b64,
+                "note": "Снимок экрана macOS получен.",
+            }
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    return {
+        "mimeType": "image/png",
+        "data": FALLBACK_PNG_BASE64,
+        "note": "Тестовый режим (не macOS): возвращена 1x1 PNG-заглушка.",
+    }
+
+
+TOOLS = [
+    {
+        "name": "request_screen_access",
+        "description": "Запрашивает у пользователя временное разрешение на снимок экрана.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Зачем нужен снимок экрана (показывается пользователю в окне запроса).",
+                },
+                "duration_seconds": {
+                    "type": "integer",
+                    "description": "На сколько секунд выдать доступ (от 15 до 600, по умолчанию 120).",
+                    "default": 120,
+                },
+            },
+            "required": ["reason"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "capture_screen",
+        "description": "Делает снимок экрана, если пользователь уже подтвердил доступ.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "revoke_screen_access",
+        "description": "Немедленно отключает активный доступ к экрану.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+]
+
+
+def send_message(msg: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def handle_call_tool(req_id: Any, params: dict[str, Any]) -> None:
+    name = params.get("name")
+    arguments = params.get("arguments") or {}
+
+    try:
+        if name == "request_screen_access":
+            reason = str(arguments.get("reason", "Помощь по текущему экрану"))
+            duration = int(arguments.get("duration_seconds", 120))
+            res = request_access(reason=reason, duration_seconds=duration)
+            send_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [{"type": "text", "text": json.dumps(res, ensure_ascii=False)}],
+                        "isError": not res.get("approved", False),
+                    },
+                }
+            )
+            return
+
+        if name == "capture_screen":
+            shot = capture_screen()
+            send_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [
+                            {"type": "text", "text": shot["note"]},
+                            {
+                                "type": "image",
+                                "data": shot["data"],
+                                "mimeType": shot["mimeType"],
+                            },
+                        ],
+                        "isError": False,
+                    },
+                }
+            )
+            return
+
+        if name == "revoke_screen_access":
+            res = revoke_access()
+            send_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [{"type": "text", "text": json.dumps(res, ensure_ascii=False)}],
+                        "isError": False,
+                    },
+                }
+            )
+            return
+
+        send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32601, "message": f"Unknown tool: {name}"},
+            }
+        )
+    except Exception as exc:
+        send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "content": [{"type": "text", "text": f"Ошибка: {exc}"}],
+                    "isError": True,
+                },
+            }
+        )
+
+
+def handle_request(msg: dict[str, Any]) -> None:
+    method = msg.get("method")
+    req_id = msg.get("id")
+    params = msg.get("params") or {}
+
+    if method == "initialize":
+        send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+                    "instructions": (
+                        "Используй request_screen_access перед capture_screen, "
+                        "а после завершения помощи вызывай revoke_screen_access."
+                    ),
+                },
+            }
+        )
+        return
+
+    if method == "notifications/initialized":
+        return
+
+    if method == "ping":
+        send_message({"jsonrpc": "2.0", "id": req_id, "result": {}})
+        return
+
+    if method == "tools/list":
+        send_message({"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS}})
+        return
+
+    if method == "tools/call":
+        handle_call_tool(req_id, params)
+        return
+
+    if req_id is not None:
+        send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            }
+        )
+
+
+def main() -> None:
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(msg, dict):
+            handle_request(msg)
+
+
+if __name__ == "__main__":
+    main()
