@@ -119,6 +119,69 @@ def search_google(query: str) -> str:
     return "Opened Google search in the default Mac browser: " + query
 
 
+def run_chrome_js(js_code: str) -> str:
+    escaped = js_code.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'tell application "Google Chrome" to execute active tab of front window javascript "{escaped}"'
+    proc = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if proc.returncode != 0:
+        err = proc.stderr.strip() or f"код {proc.returncode}"
+        raise RuntimeError(
+            "Не удалось выполнить действие в Chrome (включите в Chrome: Вид -> Разработчик -> Разрешить JavaScript из Apple Events): "
+            + err
+        )
+    return proc.stdout.strip()
+
+
+def read_chrome_tab() -> str:
+    if not has_active_consent():
+        raise PermissionError(
+            "Нет активного разрешения. Сначала вызовите request_screen_access."
+        )
+    js = (
+        "(function(){"
+        "var items = Array.from(document.querySelectorAll('a,button,[role=button],input[type=submit],[data-identifier]'))"
+        ".map(function(el){return (el.innerText||el.value||el.getAttribute('aria-label')||'').trim().replace(/\\s+/g,' ');})"
+        ".filter(function(t){return t.length>0 && t.length<=120;})"
+        ".slice(0,40);"
+        "return JSON.stringify({title:document.title,url:location.href,clickables:items});"
+        "})()"
+    )
+    return run_chrome_js(js)
+
+
+def click_chrome_element(target_text: str) -> str:
+    if not has_active_consent():
+        raise PermissionError(
+            "Нет активного разрешения. Сначала вызовите request_screen_access."
+        )
+    target_text = target_text.strip()
+    if not target_text or len(target_text) > 120:
+        raise ValueError("target_text must contain 1–120 characters")
+    if is_macos() and not prompt_macos_consent(f"Нажать элемент в Chrome: {target_text}", 30):
+        raise PermissionError("Пользователь отклонил нажатие элемента в Chrome.")
+    target_json = json.dumps(target_text, ensure_ascii=False)
+    js = (
+        "(function(){"
+        f"var needle = ({target_json}).toLowerCase();"
+        "var nodes = Array.from(document.querySelectorAll('a,button,[role=button],input[type=submit],[data-identifier],div[tabindex=\"0\"]'));"
+        "var match = nodes.find(function(el){"
+        "var t = (el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('data-identifier')||'').trim().toLowerCase();"
+        "return t === needle || t.indexOf(needle) !== -1;"
+        "});"
+        "if(!match) return 'NOT_FOUND';"
+        "match.click();"
+        "return 'CLICKED: ' + ((match.innerText||match.value||match.getAttribute('aria-label')||'').trim().replace(/\\s+/g,' ').slice(0,80));"
+        "})()"
+    )
+    return run_chrome_js(js)
+
+
 def capture_screen() -> dict[str, Any]:
     if not has_active_consent():
         raise PermissionError(
@@ -230,6 +293,32 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "read_chrome_tab",
+        "description": "Читает заголовок, URL и список кликабельных кнопок/ссылок активной вкладки Google Chrome на Mac (без движения мыши).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "click_chrome_element",
+        "description": "Нажимает кнопку или ссылку в активной вкладке Google Chrome на Mac по тексту или email/метке (с подтверждением и без движения мыши).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target_text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "description": "Текст кнопки, ссылки или email аккаунта, по которому нужно кликнуть.",
+                }
+            },
+            "required": ["target_text"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -303,6 +392,24 @@ def handle_call_tool(req_id: Any, params: dict[str, Any]) -> None:
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": {"content": [{"type": "text", "text": result}], "isError": False},
+            })
+            return
+
+        if name == "read_chrome_tab":
+            result = read_chrome_tab()
+            send_message({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": result}], "isError": False},
+            })
+            return
+
+        if name == "click_chrome_element":
+            result = click_chrome_element(str(arguments.get("target_text", "")))
+            send_message({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": result}], "isError": result == "NOT_FOUND"},
             })
             return
 
