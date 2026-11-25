@@ -43,7 +43,7 @@ from typing import Any
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "mac-screen"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 
 FALLBACK_PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
@@ -117,6 +117,7 @@ def request_access(reason: str, duration_seconds: int = 120) -> dict[str, Any]:
     return {
         "approved": True,
         "platform": platform.system(),
+        "version": SERVER_VERSION,
         "expires_in_seconds": duration_seconds,
         "reason": reason,
     }
@@ -161,6 +162,13 @@ def capture_screen() -> dict[str, Any]:
                 raise RuntimeError(
                     f"Не удалось сделать снимок через screencapture: {proc.stderr.strip() or 'код ' + str(proc.returncode)}"
                 )
+            subprocess.run(
+                ["sips", "-Z", "1920", tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
             with open(tmp_path, "rb") as f:
                 data_b64 = base64.b64encode(f.read()).decode("ascii")
             return {
@@ -413,6 +421,10 @@ class MCPHttpHandler(BaseHTTPRequestHandler):
         sys.stderr.write("mac-screen: " + fmt % args + "\n")
 
 
+class ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--http":
         if not os.environ.get("MAC_SCREEN_TOKEN"):
@@ -420,7 +432,7 @@ def main() -> None:
         host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
         port = int(sys.argv[3]) if len(sys.argv) > 3 else 18766
         print(f"mac-screen MCP listening on {host}:{port}/mcp", file=sys.stderr)
-        HTTPServer((host, port), MCPHttpHandler).serve_forever()
+        ReusableHTTPServer((host, port), MCPHttpHandler).serve_forever()
         return
     for line in sys.stdin:
         line = line.strip()
@@ -464,7 +476,12 @@ cat > "$PLIST" <<EOF
 <key>StandardErrorPath</key><string>$DIR/server.log</string></dict></plist>
 EOF
 launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
+launchctl remove "$LABEL" >/dev/null 2>&1 || true
 pkill -f "$DIR/server.py" >/dev/null 2>&1 || true
+OLD_PIDS=$(lsof -tiTCP:18766 -sTCP:LISTEN 2>/dev/null || true)
+if [ -n "$OLD_PIDS" ]; then kill -9 $OLD_PIDS >/dev/null 2>&1 || true; fi
+sleep 1
+screencapture -x /tmp/opencode_tcc_check.png && rm -f /tmp/opencode_tcc_check.png && echo "Screen Recording TCC check: OK" || echo "Screen Recording TCC check: FAILED (enable Terminal in System Settings -> Privacy & Security -> Screen Recording)"
 # Start directly from the current Terminal session so macOS TCC inherits Terminal.app's Screen Recording permission
 nohup "$DIR/server.sh" >>"$DIR/server.log" 2>&1 </dev/null &
 

@@ -14,7 +14,7 @@ from typing import Any
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "mac-screen"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 
 # A minimal 1x1 transparent PNG used as a safe fallback on non-macOS test systems
 FALLBACK_PNG_BASE64 = (
@@ -90,6 +90,7 @@ def request_access(reason: str, duration_seconds: int = 120) -> dict[str, Any]:
     return {
         "approved": True,
         "platform": platform.system(),
+        "version": SERVER_VERSION,
         "expires_in_seconds": duration_seconds,
         "reason": reason,
     }
@@ -136,6 +137,13 @@ def capture_screen() -> dict[str, Any]:
                 raise RuntimeError(
                     f"Не удалось сделать снимок через screencapture: {proc.stderr.strip() or 'код ' + str(proc.returncode)}"
                 )
+            subprocess.run(
+                ["sips", "-Z", "1920", tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
             with open(tmp_path, "rb") as f:
                 data_b64 = base64.b64encode(f.read()).decode("ascii")
             return {
@@ -388,6 +396,10 @@ class MCPHttpHandler(BaseHTTPRequestHandler):
         sys.stderr.write("mac-screen: " + fmt % args + "\n")
 
 
+class ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--http":
         if not os.environ.get("MAC_SCREEN_TOKEN"):
@@ -395,7 +407,7 @@ def main() -> None:
         host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
         port = int(sys.argv[3]) if len(sys.argv) > 3 else 18766
         print(f"mac-screen MCP listening on {host}:{port}/mcp", file=sys.stderr)
-        HTTPServer((host, port), MCPHttpHandler).serve_forever()
+        ReusableHTTPServer((host, port), MCPHttpHandler).serve_forever()
         return
     for line in sys.stdin:
         line = line.strip()
