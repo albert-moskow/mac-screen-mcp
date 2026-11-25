@@ -226,6 +226,7 @@ def capture_screen() -> dict[str, Any]:
     if is_macos():
         with tempfile.NamedTemporaryFile(prefix="opencode_screen_", suffix=".png", delete=False) as tmp:
             tmp_path = tmp.name
+        jpeg_path = tmp_path[:-4] + ".jpg"
         try:
             proc = subprocess.run(
                 ["screencapture", "-x", tmp_path],
@@ -252,25 +253,28 @@ def capture_screen() -> dict[str, Any]:
                     f"Не удалось сделать снимок через screencapture: {proc.stderr.strip() or 'код ' + str(proc.returncode)}"
                 )
             subprocess.run(
-                ["sips", "-Z", "1920", tmp_path],
+                ["sips", "-s", "format", "jpeg", "-s", "formatOptions", "55", "-Z", "1280", tmp_path, "--out", jpeg_path],
                 capture_output=True,
                 text=True,
                 timeout=10,
                 check=False,
             )
-            with open(tmp_path, "rb") as f:
+            if not os.path.exists(jpeg_path):
+                raise RuntimeError("Не удалось сжать снимок экрана в JPEG через sips.")
+            with open(jpeg_path, "rb") as f:
                 data_b64 = base64.b64encode(f.read()).decode("ascii")
             return {
-                "mimeType": "image/png",
+                "mimeType": "image/jpeg",
                 "data": data_b64,
-                "note": "Снимок экрана macOS получен.",
+                "note": "Снимок экрана macOS сжат в JPEG 1280px.",
             }
         finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+            for path in (tmp_path, jpeg_path):
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
 
     return {
         "mimeType": "image/png",
