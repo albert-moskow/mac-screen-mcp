@@ -38,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
@@ -45,6 +46,7 @@ PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "mac-screen"
 SERVER_VERSION = "0.2.0"
 
+# A minimal 1x1 transparent PNG used as a safe fallback on non-macOS test systems
 FALLBACK_PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 )
@@ -96,6 +98,7 @@ def request_access(reason: str, duration_seconds: int = 120) -> dict[str, Any]:
     if is_macos():
         approved = prompt_macos_consent(reason, duration_seconds)
     else:
+        # On Linux/dev environment, only approve when explicitly enabled via env var
         approved = os.environ.get("MAC_SCREEN_DEV_AUTO_APPROVE") == "1"
 
     if not approved:
@@ -130,6 +133,21 @@ def revoke_access() -> dict[str, Any]:
     return {"approved": False, "message": "Доступ к экрану отключён."}
 
 
+def search_google(query: str) -> str:
+    if not has_active_consent():
+        raise PermissionError(
+            "Нет активного разрешения. Сначала вызовите request_screen_access."
+        )
+    query = query.strip()
+    if not query or len(query) > 200:
+        raise ValueError("Search query must contain 1–200 characters")
+    if is_macos() and not prompt_macos_consent(f"Открыть поиск Google: {query}", 30):
+        raise PermissionError("Пользователь отклонил открытие браузера.")
+    url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+    subprocess.run(["open", url], check=True, timeout=10)
+    return "Opened Google search in the default Mac browser: " + query
+
+
 def capture_screen() -> dict[str, Any]:
     if not has_active_consent():
         raise PermissionError(
@@ -148,6 +166,8 @@ def capture_screen() -> dict[str, Any]:
                 check=False,
             )
             if proc.returncode != 0 or not os.path.exists(tmp_path):
+                # Fallback when LaunchAgent lacks direct TCC Screen Recording:
+                # run screencapture via Terminal.app which has Screen Recording permission.
                 osa = (
                     f'tell application "Terminal" to do script '
                     f'"screencapture -x {tmp_path} && exit"'
@@ -229,6 +249,16 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "search_google",
+        "description": "Открывает Google-поиск с заданным текстом в браузере Mac.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 200}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -294,6 +324,15 @@ def handle_call_tool(req_id: Any, params: dict[str, Any]) -> None:
                     },
                 }
             )
+            return
+
+        if name == "search_google":
+            result = search_google(str(arguments.get("query", "")))
+            send_message({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": result}], "isError": False},
+            })
             return
 
         send_message(

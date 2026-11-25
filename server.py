@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
@@ -101,6 +102,21 @@ def revoke_access() -> dict[str, Any]:
     SESSION_STATE["expires_at"] = 0.0
     SESSION_STATE["reason"] = ""
     return {"approved": False, "message": "Доступ к экрану отключён."}
+
+
+def search_google(query: str) -> str:
+    if not has_active_consent():
+        raise PermissionError(
+            "Нет активного разрешения. Сначала вызовите request_screen_access."
+        )
+    query = query.strip()
+    if not query or len(query) > 200:
+        raise ValueError("Search query must contain 1–200 characters")
+    if is_macos() and not prompt_macos_consent(f"Открыть поиск Google: {query}", 30):
+        raise PermissionError("Пользователь отклонил открытие браузера.")
+    url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+    subprocess.run(["open", url], check=True, timeout=10)
+    return "Opened Google search in the default Mac browser: " + query
 
 
 def capture_screen() -> dict[str, Any]:
@@ -204,6 +220,16 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "search_google",
+        "description": "Открывает Google-поиск с заданным текстом в браузере Mac.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 200}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -269,6 +295,15 @@ def handle_call_tool(req_id: Any, params: dict[str, Any]) -> None:
                     },
                 }
             )
+            return
+
+        if name == "search_google":
+            result = search_google(str(arguments.get("query", "")))
+            send_message({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": result}], "isError": False},
+            })
             return
 
         send_message(
