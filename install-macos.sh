@@ -93,8 +93,18 @@ def prompt_macos_consent(reason: str, duration_seconds: int) -> bool:
     return result.returncode == 0
 
 
-def request_access(reason: str, duration_seconds: int = 120) -> dict[str, Any]:
-    duration_seconds = max(15, min(int(duration_seconds), 600))
+def request_access(reason: str, duration_seconds: int = 14400) -> dict[str, Any]:
+    if has_active_consent():
+        remaining = int(max(0, SESSION_STATE["expires_at"] - time.time()))
+        return {
+            "approved": True,
+            "platform": platform.system(),
+            "version": SERVER_VERSION,
+            "expires_in_seconds": remaining,
+            "reason": SESSION_STATE["reason"],
+            "reused_session": True,
+        }
+    duration_seconds = max(60, min(int(duration_seconds), 43200))
     if is_macos():
         approved = prompt_macos_consent(reason, duration_seconds)
     else:
@@ -141,8 +151,6 @@ def search_google(query: str) -> str:
     query = query.strip()
     if not query or len(query) > 200:
         raise ValueError("Search query must contain 1–200 characters")
-    if is_macos() and not prompt_macos_consent(f"Открыть поиск Google: {query}", 30):
-        raise PermissionError("Пользователь отклонил открытие браузера.")
     url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
     subprocess.run(["open", url], check=True, timeout=10)
     return "Opened Google search in the default Mac browser: " + query
@@ -192,8 +200,6 @@ def click_chrome_element(target_text: str) -> str:
     target_text = target_text.strip()
     if not target_text or len(target_text) > 120:
         raise ValueError("target_text must contain 1–120 characters")
-    if is_macos() and not prompt_macos_consent(f"Нажать элемент в Chrome: {target_text}", 30):
-        raise PermissionError("Пользователь отклонил нажатие элемента в Chrome.")
     target_json = json.dumps(target_text, ensure_ascii=False)
     js = (
         "(function(){"
@@ -286,8 +292,8 @@ TOOLS = [
                 },
                 "duration_seconds": {
                     "type": "integer",
-                    "description": "На сколько секунд выдать доступ (от 15 до 600, по умолчанию 120).",
-                    "default": 120,
+                    "description": "На сколько секунд выдать доступ на сессию (от 60 до 43200, по умолчанию 14400 = 4 часа).",
+                    "default": 14400,
                 },
             },
             "required": ["reason"],
@@ -366,7 +372,7 @@ def handle_call_tool(req_id: Any, params: dict[str, Any]) -> None:
     try:
         if name == "request_screen_access":
             reason = str(arguments.get("reason", "Помощь по текущему экрану"))
-            duration = int(arguments.get("duration_seconds", 120))
+            duration = int(arguments.get("duration_seconds", 14400))
             res = request_access(reason=reason, duration_seconds=duration)
             send_message(
                 {
@@ -477,8 +483,8 @@ def handle_request(msg: dict[str, Any]) -> None:
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
                     "instructions": (
-                        "Используй request_screen_access перед capture_screen, "
-                        "а после завершения помощи вызывай revoke_screen_access."
+                        "Вызывай request_screen_access один раз в начале сессии (разрешение действует на всю сессию). "
+                        "НЕ вызывай revoke_screen_access после каждого действия — вызывай revoke_screen_access только когда пользователь явно попросит отключиться."
                     ),
                 },
             }
