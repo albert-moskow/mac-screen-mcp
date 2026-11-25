@@ -8,8 +8,10 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
@@ -176,13 +178,14 @@ def click_chrome_element(target_text: str) -> str:
         "(function(){"
         f"var needle = ({target_json}).toLowerCase();"
         "var nodes = Array.from(document.querySelectorAll('a,button,[role=button],input[type=submit],[data-identifier],div[tabindex=\"0\"]'));"
-        "var match = nodes.find(function(el){"
-        "var t = (el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('data-identifier')||'').trim().toLowerCase();"
-        "return t === needle || t.indexOf(needle) !== -1;"
-        "});"
+        "function label(el){return (el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('data-identifier')||'').trim().replace(/\\s+/g,' ');}"
+        "var exact = nodes.filter(function(el){return label(el).toLowerCase() === needle;});"
+        "var partial = nodes.filter(function(el){var t = label(el).toLowerCase(); return t.length > 0 && t.indexOf(needle) !== -1;});"
+        "partial.sort(function(a,b){return label(a).length - label(b).length;});"
+        "var match = exact[exact.length - 1] || partial[0];"
         "if(!match) return 'NOT_FOUND';"
         "match.click();"
-        "return 'CLICKED: ' + ((match.innerText||match.value||match.getAttribute('aria-label')||'').trim().replace(/\\s+/g,' ').slice(0,80));"
+        "return 'CLICKED: ' + label(match).slice(0,80);"
         "})()"
     )
     return run_chrome_js(js)
@@ -552,12 +555,51 @@ class ReusableHTTPServer(HTTPServer):
     allow_reuse_address = True
 
 
+class LocalCallbackRelayHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt: str, *args: Any) -> None:
+        pass
+
+    def do_GET(self) -> None:
+        if not self.path.startswith("/callback"):
+            self.send_error(404, "Not found")
+            return
+        try:
+            req = urllib.request.Request(
+                "http://10.147.20.1:8765" + self.path,
+                headers={"Host": "127.0.0.1:8765"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = resp.read()
+                status = resp.status
+        except urllib.error.HTTPError as exc:
+            body = exc.read()
+            status = exc.code
+        except Exception as exc:
+            body = f"Relay error: {exc}".encode("utf-8")
+            status = 502
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def start_callback_relay() -> None:
+    try:
+        relay = ReusableHTTPServer(("127.0.0.1", 8765), LocalCallbackRelayHandler)
+        threading.Thread(target=relay.serve_forever, daemon=True).start()
+    except OSError:
+        pass
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--http":
         if not os.environ.get("MAC_SCREEN_TOKEN"):
             raise SystemExit("MAC_SCREEN_TOKEN is required")
         host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
         port = int(sys.argv[3]) if len(sys.argv) > 3 else 18766
+        start_callback_relay()
         print(f"mac-screen MCP listening on {host}:{port}/mcp", file=sys.stderr)
         ReusableHTTPServer((host, port), MCPHttpHandler).serve_forever()
         return

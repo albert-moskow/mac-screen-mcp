@@ -26,6 +26,21 @@ class ScreenConsentTest(unittest.TestCase):
         self.assertFalse(server.has_active_consent())
         self.assertFalse(server.SESSION_STATE["approved"])
 
+    def test_click_prefers_exact_button_over_outer_container(self):
+        server.SESSION_STATE.update(approved=True, expires_at=server.time.time() + 30, reason="test")
+        captured = {}
+        orig = server.run_chrome_js
+        try:
+            def fake_run(js):
+                captured["js"] = js
+                return "CLICKED: Продолжить"
+            server.run_chrome_js = fake_run
+            res = server.click_chrome_element("Продолжить")
+            self.assertEqual(res, "CLICKED: Продолжить")
+            self.assertIn("exact[exact.length - 1] || partial[0]", captured["js"])
+        finally:
+            server.run_chrome_js = orig
+
 
 if __name__ == "__main__":
     unittest.main()
